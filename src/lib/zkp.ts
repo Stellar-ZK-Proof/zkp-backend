@@ -1,127 +1,121 @@
 /**
- * ZKP helpers — wraps snarkjs Groth16 proof generation.
+ * ZKP helpers — Groth16 proof generation via snarkjs.
  *
  * Circuit: payment_commitment.circom
- * Private inputs : amount, recipient (address bytes), salt
- * Public  inputs : commitment (Pedersen hash), nullifier, audit_ref_hash
- *
- * In dev/test mode (no zkey present) we return mock proofs for local runs.
+ * Private inputs : amount, recipient_hash, salt
+ * Public  inputs : commitment, nullifier, audit_ref_hash
  */
 
 import * as snarkjs from "snarkjs";
 import * as crypto from "crypto";
-import path from "path";
-import fs from "fs";
+import * as path from "path";
+import * as fs from "fs";
 
 const CIRCUIT_DIR = path.join(__dirname, "../../circuits");
-const WASM_PATH = path.join(CIRCUIT_DIR, "payment_commitment.wasm");
-const ZKEY_PATH = path.join(CIRCUIT_DIR, "payment_commitment_final.zkey");
+const WASM_PATH   = path.join(CIRCUIT_DIR, "payment_commitment.wasm");
+const ZKEY_PATH   = path.join(CIRCUIT_DIR, "payment_commitment_final.zkey");
+const VK_PATH     = path.join(CIRCUIT_DIR, "verification_key.json");
 
-const DEV_MODE = !fs.existsSync(WASM_PATH);
+export const CIRCUIT_READY = fs.existsSync(WASM_PATH) && fs.existsSync(ZKEY_PATH);
+
+if (!CIRCUIT_READY) {
+  console.warn("[ZKP] Circuit files not found — running in DEV MODE (mock proofs)");
+}
 
 export interface PaymentInputs {
-  amount: bigint;        // e.g. in stroops (1 XLM = 10_000_000)
-  recipient: string;     // hex-encoded address bytes
-  salt: string;          // random 32-byte hex
-  auditRef: string;      // SWIFT ref or internal ID, hashed before use
+  amount: bigint;
+  recipient: string;   // hex
+  salt: string;        // 32-byte hex
+  auditRef: string;
 }
 
 export interface ZkProofBundle {
-  proofBytes: Buffer;           // compressed proof
-  publicInputs: Buffer[];       // [commitment, nullifier, auditRefHash]
-  commitment: Buffer;
-  nullifier: Buffer;
+  proofBytes:   Buffer;
+  publicInputs: Buffer[];
+  commitment:   Buffer;
+  nullifier:    Buffer;
   auditRefHash: Buffer;
+  salt:         string;
 }
 
-/** Derive a 32-byte commitment hash from payment inputs (Pedersen substitute). */
+// ── Deterministic derivations ────────────────────────────────────────────────
+
 export function deriveCommitment(inputs: PaymentInputs): Buffer {
-  const preimage = `${inputs.amount}:${inputs.recipient}:${inputs.salt}`;
-  return crypto.createHash("sha256").update(preimage).digest();
+  return crypto
+    .createHash("sha256")
+    .update(`${inputs.amount}:${inputs.recipient}:${inputs.salt}`)
+    .digest();
 }
 
-/** Derive nullifier from salt + recipient (one-time spend token). */
 export function deriveNullifier(inputs: PaymentInputs): Buffer {
-  const preimage = `nullifier:${inputs.salt}:${inputs.recipient}`;
-  return crypto.createHash("sha256").update(preimage).digest();
+  return crypto
+    .createHash("sha256")
+    .update(`nullifier:${inputs.salt}:${inputs.recipient}`)
+    .digest();
 }
 
-/** Hash the audit reference string. */
 export function hashAuditRef(auditRef: string): Buffer {
   return crypto.createHash("sha256").update(auditRef).digest();
 }
 
-/** Generate a full ZK proof bundle for a payment. */
-export async function generateProof(
-  inputs: PaymentInputs
-): Promise<ZkProofBundle> {
-  const commitment = deriveCommitment(inputs);
-  const nullifier = deriveNullifier(inputs);
+// ── Proof generation ─────────────────────────────────────────────────────────
+
+export async function generateProof(inputs: PaymentInputs): Promise<ZkProofBundle> {
+  const commitment   = deriveCommitment(inputs);
+  const nullifier    = deriveNullifier(inputs);
   const auditRefHash = hashAuditRef(inputs.auditRef);
 
-  if (DEV_MODE) {
-    // Development mock — returns deterministic bytes, no real proof
-    console.warn("[ZKP] DEV MODE: returning mock proof (no circuit files found)");
+  if (!CIRCUIT_READY) {
+    // Dev mode — deterministic mock proof
     const mockProof = crypto
       .createHash("sha256")
-      .update(commitment)
-      .update(nullifier)
+      .update(Buffer.concat([commitment, nullifier]))
       .digest();
     return {
-      proofBytes: Buffer.concat([mockProof, mockProof, mockProof, mockProof]),
+      proofBytes:   Buffer.concat([mockProof, mockProof, mockProof, mockProof]),
       publicInputs: [commitment, nullifier, auditRefHash],
-      commitment,
-      nullifier,
-      auditRefHash,
+      commitment, nullifier, auditRefHash,
+      salt: inputs.salt,
     };
   }
 
-  // Production — full snarkjs Groth16 proof
+  // Production — real Groth16 proof
   const circuitInputs = {
-    amount: inputs.amount.toString(),
-    recipient: BigInt("0x" + inputs.recipient).toString(),
-    salt: BigInt("0x" + inputs.salt).toString(),
-    auditRef: BigInt("0x" + Buffer.from(inputs.auditRef).toString("hex")).toString(),
+    amount:        inputs.amount.toString(),
+    recipient_hash: BigInt("0x" + inputs.recipient.slice(0, 62)).toString(),
+    salt:          BigInt("0x" + inputs.salt.slice(0, 62)).toString(),
+    commitment:    BigInt("0x" + commitment.toString("hex")).toString(),
+    nullifier:     BigInt("0x" + nullifier.toString("hex")).toString(),
+    audit_ref_hash: BigInt("0x" + auditRefHash.toString("hex")).toString(),
   };
 
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInputs,
-    WASM_PATH,
-    ZKEY_PATH
+  const { proof, publicSignals } = await (snarkjs as any).groth16.fullProve(
+    circuitInputs, WASM_PATH, ZKEY_PATH
   );
 
-  // Compress proof to bytes
-  const proofBytes = Buffer.from(JSON.stringify(proof));
-
   return {
-    proofBytes,
+    proofBytes:   Buffer.from(JSON.stringify(proof)),
     publicInputs: (publicSignals as string[]).map((s) =>
       Buffer.from(BigInt(s).toString(16).padStart(64, "0"), "hex")
     ),
-    commitment,
-    nullifier,
-    auditRefHash,
+    commitment, nullifier, auditRefHash,
+    salt: inputs.salt,
   };
 }
 
-/** Verify a proof off-chain (for API pre-flight checks). */
+// ── Proof verification ────────────────────────────────────────────────────────
+
 export async function verifyProof(
   proofBytes: Buffer,
   publicInputs: Buffer[]
 ): Promise<boolean> {
-  if (DEV_MODE) {
-    // Always passes in dev
-    return proofBytes.length >= 64;
+  if (!CIRCUIT_READY) {
+    return proofBytes.length >= 64; // mock always passes
   }
-
-  const vKeyPath = path.join(CIRCUIT_DIR, "verification_key.json");
-  if (!fs.existsSync(vKeyPath)) throw new Error("Verification key not found");
-
-  const vKey = JSON.parse(fs.readFileSync(vKeyPath, "utf8"));
+  const vKey = JSON.parse(fs.readFileSync(VK_PATH, "utf8"));
   const proof = JSON.parse(proofBytes.toString());
   const signals = publicInputs.map((pi) =>
     BigInt("0x" + pi.toString("hex")).toString()
   );
-
-  return snarkjs.groth16.verify(vKey, signals, proof);
+  return (snarkjs as any).groth16.verify(vKey, signals, proof);
 }
