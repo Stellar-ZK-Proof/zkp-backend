@@ -2,14 +2,12 @@ import {
   Contract,
   Keypair,
   Networks,
-  SorobanRpc,
+  rpc as SorobanRpc,
   TransactionBuilder,
   BASE_FEE,
   xdr,
   Address,
-  nativeToScVal,
   scValToNative,
-  StrKey,
 } from "@stellar/stellar-sdk";
 import { logger } from "./logger";
 
@@ -29,12 +27,12 @@ export const getKeypair = (): Keypair => {
   return Keypair.fromSecret(secret);
 };
 
-/** Build, simulate, sign and submit a Soroban contract call. Returns the result ScVal. */
+/** Build, simulate, sign and submit a Soroban contract call */
 export async function invokeContract(
   method: string,
   args: xdr.ScVal[]
 ): Promise<xdr.ScVal | null> {
-  if (!CONTRACT_ID) throw new Error("CONTRACT_ID not set");
+  if (!CONTRACT_ID) throw new Error("CONTRACT_ID not set in environment");
   const kp = getKeypair();
   const account = await server.getAccount(kp.publicKey());
 
@@ -47,14 +45,14 @@ export async function invokeContract(
     .build();
 
   const sim = await server.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+  if (!SorobanRpc.Api.isSimulationSuccess(sim)) {
+    throw new Error(`Simulation failed: ${(sim as any).error}`);
   }
 
   const prepared = SorobanRpc.assembleTransaction(tx, sim).build();
   prepared.sign(kp);
 
-  logger.info(`Submitting ${method} to Soroban`);
+  logger.info(`Submitting ${method}`);
   const send = await server.sendTransaction(prepared);
   if (send.status === "ERROR") {
     throw new Error(`Submit error: ${JSON.stringify(send.errorResult)}`);
@@ -77,16 +75,15 @@ export async function invokeContract(
   }
 
   if (resp.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-    return (resp as SorobanRpc.Api.GetSuccessfulTransactionResponse)
-      .returnValue ?? null;
+    const successResp = resp as SorobanRpc.Api.GetSuccessfulTransactionResponse;
+    return successResp.returnValue ?? null;
   }
 
   throw new Error(`Transaction timeout: ${send.hash}`);
 }
 
-/** Convert a 32-byte Buffer to ScVal bytes */
-export const buf32ToScVal = (buf: Buffer): xdr.ScVal =>
-  xdr.ScVal.scvBytes(buf);
+/** Convert Buffer to ScVal bytes */
+const buf32 = (buf: Buffer): xdr.ScVal => xdr.ScVal.scvBytes(buf);
 
 /** Submit payment commitment to the contract */
 export async function submitPaymentOnChain(p: {
@@ -97,14 +94,12 @@ export async function submitPaymentOnChain(p: {
 }): Promise<string> {
   const result = await invokeContract("submit_payment", [
     new Address(p.senderAddress).toScVal(),
-    buf32ToScVal(p.commitment),
-    buf32ToScVal(p.nullifier),
-    buf32ToScVal(p.auditRefHash),
+    buf32(p.commitment),
+    buf32(p.nullifier),
+    buf32(p.auditRefHash),
   ]);
-
   if (!result) throw new Error("submit_payment returned null");
-  const raw = scValToNative(result) as Uint8Array;
-  return Buffer.from(raw).toString("hex");
+  return Buffer.from(scValToNative(result) as Uint8Array).toString("hex");
 }
 
 /** Settle a payment with a ZK proof */
@@ -113,8 +108,7 @@ export async function settlePaymentOnChain(p: {
   proofBytes: Buffer;
   publicInputs: Buffer[];
 }): Promise<void> {
-  const piVec = xdr.ScVal.scvVec(p.publicInputs.map(buf32ToScVal));
-
+  const piVec = xdr.ScVal.scvVec(p.publicInputs.map(buf32));
   const proofMap = xdr.ScVal.scvMap([
     new xdr.ScMapEntry({
       key: xdr.ScVal.scvSymbol("proof_bytes"),
@@ -125,17 +119,15 @@ export async function settlePaymentOnChain(p: {
       val: piVec,
     }),
   ]);
-
-  await invokeContract("settle_payment", [
-    buf32ToScVal(p.txId),
-    proofMap,
-  ]);
+  await invokeContract("settle_payment", [buf32(p.txId), proofMap]);
 }
 
-/** Query a transaction record from the contract */
-export async function getTxOnChain(txId: Buffer): Promise<Record<string, unknown> | null> {
+/** Query a transaction record */
+export async function getTxOnChain(
+  txId: Buffer
+): Promise<Record<string, unknown> | null> {
   try {
-    const result = await invokeContract("get_tx", [buf32ToScVal(txId)]);
+    const result = await invokeContract("get_tx", [buf32(txId)]);
     if (!result) return null;
     return scValToNative(result) as Record<string, unknown>;
   } catch {
@@ -146,7 +138,7 @@ export async function getTxOnChain(txId: Buffer): Promise<Record<string, unknown
 /** Check if nullifier is spent */
 export async function isNullifierSpent(nullifier: Buffer): Promise<boolean> {
   try {
-    const result = await invokeContract("is_nullifier_spent", [buf32ToScVal(nullifier)]);
+    const result = await invokeContract("is_nullifier_spent", [buf32(nullifier)]);
     if (!result) return false;
     return scValToNative(result) as boolean;
   } catch {

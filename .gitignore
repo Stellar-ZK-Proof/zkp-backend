@@ -6,3 +6,5 @@ dist/
 # circuits/*.wasm  <- committed
 # circuits/*.zkey  <- committed
 # circuits/verification_key.json  <- committed
+.env
+.env.local

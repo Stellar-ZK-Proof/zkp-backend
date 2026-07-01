@@ -6,64 +6,59 @@
 
 ## Stack
 - Node.js 20 + Express + TypeScript
-- **snarkjs** Groth16 proof generation (real circuit, trusted setup complete)
-- `@stellar/stellar-sdk` Soroban RPC client
+- **snarkjs** Groth16 proof generation (real circuit committed in `circuits/`)
+- `@stellar/stellar-sdk` v16 — Soroban RPC client
 - Winston logger
 
-## ZK Circuit Status
+## Live Contract (Testnet)
 
-The `circuits/` directory contains production-ready artifacts:
-
-| File | Status | Description |
-|---|---|---|
-| `payment_commitment.circom` | ✅ committed | Circuit source |
-| `payment_commitment.wasm` | ✅ committed | Compiled circuit |
-| `payment_commitment_final.zkey` | ✅ committed | Phase 2 zkey (trusted setup complete) |
-| `verification_key.json` | ✅ committed | On-chain verifier key |
-
-Proof verified in CI: `snarkjs groth16 verify` passes with test vectors.
+**Contract ID:** `CBV43YWUD4ZJL5WITK7VTU5F6Z25QDQVXDIABQV65JQQNIMNBC6EMIUP`  
+[View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/CBV43YWUD4ZJL5WITK7VTU5F6Z25QDQVXDIABQV65JQQNIMNBC6EMIUP)
 
 ## API Routes
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/payments/submit` | Generate proof + submit + settle on Soroban |
-| `POST` | `/api/proofs/generate` | Generate proof bundle (no on-chain submission) |
-| `POST` | `/api/proofs/verify` | Verify a proof off-chain |
-| `POST` | `/api/institutions/whitelist` | Whitelist an institution (admin) |
-| `GET`  | `/api/health` | Health check |
+| `GET`  | `/api/payments/:txId` | Query on-chain transaction record |
+| `POST` | `/api/proofs/generate` | Generate proof bundle (no on-chain) |
+| `POST` | `/api/proofs/verify` | Verify proof off-chain |
+| `POST` | `/api/institutions/whitelist` | Whitelist institution (admin) |
+| `GET`  | `/api/health` | Health + circuit + RPC status |
 
 ## Quickstart
 
 ```bash
 cp .env.example .env
-# Fill in: CONTRACT_ID, STELLAR_SECRET_KEY
+# Fill in: STELLAR_SECRET_KEY, CONTRACT_ID
 npm install
 npm run dev   # → http://localhost:4000
 ```
 
-## Example: Submit a private payment
+## Example
 
 ```bash
+# Submit a private payment
 curl -X POST http://localhost:4000/api/payments/submit \
   -H "Content-Type: application/json" \
   -d '{
-    "senderAddress": "GABC...",
+    "senderAddress": "GA2LCOB7...",
     "amount": "1000000000",
-    "recipient": "GXYZ...",
-    "auditRef": "SWIFT-REF-20260701"
+    "recipient": "INSTITUTION_BIC_OR_ADDRESS",
+    "auditRef": "SWIFT-20260701-001"
   }'
 ```
 
-Response:
-```json
-{
-  "txId": "a3f9...",
-  "commitment": "2b4c...",
-  "status": "settled",
-  "message": "Payment submitted and settled with ZK proof"
-}
-```
+## ZK Circuit Status
+
+| File | Status |
+|---|---|
+| `circuits/payment_commitment.circom` | ✅ Source |
+| `circuits/payment_commitment.wasm` | ✅ Compiled |
+| `circuits/payment_commitment_final.zkey` | ✅ Trusted setup done |
+| `circuits/verification_key.json` | ✅ Exported |
+
+Without circuit files the backend runs in **dev mode** (mock proofs).
 
 ## Related repos
 - [zkp-frontend](https://github.com/Stellar-ZK-Proof/zkp-frontend)
