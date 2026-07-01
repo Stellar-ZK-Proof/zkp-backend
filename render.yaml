@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: zkp-private-pay-api
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: STELLAR_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: CONTRACT_ID
+        value: CBV43YWUD4ZJL5WITK7VTU5F6Z25QDQVXDIABQV65JQQNIMNBC6EMIUP
+      - key: LOG_LEVEL
+        value: info
+      - key: FRONTEND_URL
+        value: https://stellar-zk-proof.github.io
+      - key: STELLAR_SECRET_KEY
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
