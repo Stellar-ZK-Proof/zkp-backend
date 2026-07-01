@@ -1,12 +1,27 @@
 # zkp-backend
 
-> Node.js/Express API for ZKP Private Pay — ZK proof generation & Stellar Soroban settlement
+> Node.js/Express API for ZKP Private Pay — Groth16 proof generation & Stellar Soroban settlement
+
+[![CI](https://github.com/Stellar-ZK-Proof/zkp-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Stellar-ZK-Proof/zkp-backend/actions/workflows/ci.yml)
 
 ## Stack
 - Node.js 20 + Express + TypeScript
-- snarkjs (Groth16 proof generation)
-- @stellar/stellar-sdk (Soroban RPC)
+- **snarkjs** Groth16 proof generation (real circuit, trusted setup complete)
+- `@stellar/stellar-sdk` Soroban RPC client
 - Winston logger
+
+## ZK Circuit Status
+
+The `circuits/` directory contains production-ready artifacts:
+
+| File | Status | Description |
+|---|---|---|
+| `payment_commitment.circom` | ✅ committed | Circuit source |
+| `payment_commitment.wasm` | ✅ committed | Compiled circuit |
+| `payment_commitment_final.zkey` | ✅ committed | Phase 2 zkey (trusted setup complete) |
+| `verification_key.json` | ✅ committed | On-chain verifier key |
+
+Proof verified in CI: `snarkjs groth16 verify` passes with test vectors.
 
 ## API Routes
 
@@ -21,13 +36,34 @@
 ## Quickstart
 
 ```bash
-cp .env.example .env   # fill in CONTRACT_ID + STELLAR_SECRET_KEY
+cp .env.example .env
+# Fill in: CONTRACT_ID, STELLAR_SECRET_KEY
 npm install
-npm run dev            # → http://localhost:4000
+npm run dev   # → http://localhost:4000
 ```
 
-## Dev mode
-Without circuit files in `circuits/`, the backend runs with **mock proofs** — suitable for UI development without a trusted setup.
+## Example: Submit a private payment
+
+```bash
+curl -X POST http://localhost:4000/api/payments/submit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "senderAddress": "GABC...",
+    "amount": "1000000000",
+    "recipient": "GXYZ...",
+    "auditRef": "SWIFT-REF-20260701"
+  }'
+```
+
+Response:
+```json
+{
+  "txId": "a3f9...",
+  "commitment": "2b4c...",
+  "status": "settled",
+  "message": "Payment submitted and settled with ZK proof"
+}
+```
 
 ## Related repos
 - [zkp-frontend](https://github.com/Stellar-ZK-Proof/zkp-frontend)

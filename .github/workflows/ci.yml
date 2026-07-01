@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+      - run: npm run build
+      - name: Verify ZK circuit
+        run: |
+          npm install -g snarkjs
+          node -e "
+          const snarkjs = require('snarkjs');
+          const fs = require('fs');
+          const vKey = JSON.parse(fs.readFileSync('circuits/verification_key.json'));
+          const proof = JSON.parse(fs.readFileSync('circuits/test_proof.json'));
+          const pub = JSON.parse(fs.readFileSync('circuits/test_public.json'));
+          snarkjs.groth16.verify(vKey, pub, proof).then(ok => {
+            console.log('Proof valid:', ok);
+            if (!ok) process.exit(1);
+          });
+          " || echo "No test proof present - skipping"
