@@ -1,0 +1,7 @@
+node_modules/
+.env
+dist/
+circuits/*.wasm
+circuits/*.zkey
+circuits/*.ptau
+.DS_Store
